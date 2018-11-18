@@ -1,5 +1,5 @@
 # -*- mode: ruby -*-
-# vi: set ft=ruby :
+# # vi: set ft=ruby :
 
 require 'fileutils'
 
@@ -14,7 +14,8 @@ if not plugins_to_install.empty?
   if system "vagrant plugin install #{plugins_to_install.join(' ')}"
     exec "vagrant #{ARGV.join(' ')}"
   else
-    abort "Installation of one or more plugins has failed. Aborting."  end
+    abort "Installation of one or more plugins has failed. Aborting."
+  end
 end
 
 CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "user-data")
@@ -59,10 +60,9 @@ end
 
 Vagrant.configure("2") do |config|
   # always use Vagrants insecure key
-  config.ssh.insert_key = true
+  config.ssh.insert_key = false
   # forward ssh agent to easily ssh into the different machines
   config.ssh.forward_agent = true
-  config.ssh.username = "core"
 
   config.vm.box = "coreos-#{$update_channel}"
   config.vm.box_url = "https://#{$update_channel}.release.core-os.net/amd64-usr/current/coreos_production_vagrant_virtualbox.json"
@@ -81,6 +81,7 @@ Vagrant.configure("2") do |config|
     # enable ignition (this is always done on virtualbox as this is how the ssh key is added to the system)
     config.ignition.enabled = true
   end
+
 
   # plugin conflict
   if Vagrant.has_plugin?("vagrant-vbguest") then
@@ -135,25 +136,36 @@ Vagrant.configure("2") do |config|
         vb.cpus = vm_cpus
         vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{$vb_cpuexecutioncap}"]
         config.ignition.config_obj = vb
+
+          # Second disk
+      disk = "./disk/data#{i}.vdi"
+      if !File.exist?(disk)
+        vb.customize ['createhd', '--filename', disk, '--size', 10000, '--variant', 'Fixed']
+        vb.customize ['modifyhd', disk, '--type', 'writethrough']
+      end
+      vb.customize ['storageattach', :id, '--storagectl', 'IDE Controller', '--port', 0, '--device', 1, '--type', 'hdd', '--medium', disk]
+
       end
 
-      ip = "10.33.10.#{i+100}"
-      config.vm.network :private_network, ip: ip
+      config.vm.network :public_network, :bridge => "Realtek PCIe GbE Family Controller", ip: "192.168.10.1"
+      ip = "192.168.10.#{i+100}"
+
+      config.vm.network :public_network, :bridge => "Realtek PCIe GbE Family Controller", ip: ip
+
+
+      # config.vm.network :private_network, ip: ip
       # This tells Ignition what the IP for eth1 (the host-only adapter) should be
       config.ignition.ip = ip
 
-      # ssh port defiding
-      config.vm.network :forwarded_port, guest: 22, host: 2400+i, id: "ssh"
-
       # Uncomment below to enable NFS for sharing the host machine into the coreos-vagrant VM.
-      #config.vm.synced_folder "./share", "/home/core/share", id: "core", :nfs => true, :mount_options => ['nolock,vers=3,udp']
-      #$shared_folders.each_with_index do |(host_folder, guest_folder), index|
-      #  config.vm.synced_folder host_folder.to_s, guest_folder.to_s, id: "core-share%02d" % index, nfs: true, mount_options: ['nolock,vers=3,udp']
-      #end
+      #config.vm.synced_folder "", "/home/core/share", id: "core", :nfs => true, :mount_options => ['nolock,vers=3,udp']
+      $shared_folders.each_with_index do |(host_folder, guest_folder), index|
+        config.vm.synced_folder host_folder.to_s, guest_folder.to_s, id: "core-share%02d" % index, nfs: true, mount_options: ['nolock,vers=3,udp']
+      end
 
-      #if $share_home
-      #  config.vm.synced_folder ENV['HOME'], ENV['HOME'], id: "home", :nfs => true, :mount_options => ['nolock,vers=3,udp']
-      #end
+      if $share_home
+        config.vm.synced_folder ENV['HOME'], ENV['HOME'], id: "home", :nfs => true, :mount_options => ['nolock,vers=3,udp']
+      end
 
       # This shouldn't be used for the virtualbox provider (it doesn't have any effect if it is though)
       if File.exist?(CLOUD_CONFIG_PATH)
@@ -162,7 +174,7 @@ Vagrant.configure("2") do |config|
         config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
       end
 
-      #config.vm.provision :shell, :path => "scripts/config_docker.sh", :privileged => true
+      config.vm.provision :shell, :path => "scripts/config_docker.sh", :privileged => true
 
 
       config.vm.provider :virtualbox do |vb|
